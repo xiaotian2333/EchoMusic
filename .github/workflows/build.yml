@@ -189,7 +189,7 @@ jobs:
       - name: Configure Windows Defender exclusion
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Add-MpPreference -ExclusionPath "$env: RUNNER_WORKSPACE"
+        run: 'Add-MpPreference -ExclusionPath "$env:RUNNER_WORKSPACE"'
 
       - name: Cache electron-builder binaries
         uses: actions/cache@v4
