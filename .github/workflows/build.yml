@@ -102,6 +102,14 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native/echo-media-controls
+            native/echo-ffmpeg-player
+            native/echo-sqlite-store
+
       - name: Add Rust cross-compile target
         if: matrix.rust_target != ''
         run: rustup target add ${{ matrix.rust_target }}
