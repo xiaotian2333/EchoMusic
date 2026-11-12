@@ -4,6 +4,7 @@ import { registerApiServerHandlers } from './server';
 import { registerWindowHandlers } from './window';
 import { registerPlayerIpc } from './player';
 import { registerOutputIpc } from './output';
+import { registerDlnaRendererIpc } from './dlnaRenderer';
 import { registerSettingsHandlers } from './settings';
 import { registerShortcutHandlers } from './shortcuts';
 import { registerTrayHandlers } from './tray';
@@ -33,6 +34,7 @@ export const registerIpcHandlers = (context: IpcContext) => {
   registerApiServerHandlers();
   registerPlayerIpc(context.playerRef);
   registerOutputIpc();
+  registerDlnaRendererIpc();
   registerSettingsHandlers(context);
   registerShortcutHandlers(context);
   registerTrayHandlers();

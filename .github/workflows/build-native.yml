@@ -170,6 +170,7 @@ jobs:
             native/echo-opencc
             native/echo-upnp
             native/echo-airplay
+            native/echo-dlna-renderer
 
       - name: Add Rust cross-compile target
         if: matrix.rust_target != ''
@@ -219,6 +220,7 @@ jobs:
           build_addon echo-opencc & pids+=("$!")
           build_addon echo-upnp & pids+=("$!")
           build_addon echo-airplay & pids+=("$!")
+          build_addon echo-dlna-renderer & pids+=("$!")
 
           status=0
           for pid in "${pids[@]}"; do
@@ -273,7 +275,7 @@ jobs:
           rm -rf "$staging"
           mkdir -p "$staging/native"
 
-          addons=(echo-audio-capture echo-media-controls echo-audio-player echo-sqlite-store echo-opencc echo-upnp echo-airplay)
+          addons=(echo-audio-capture echo-media-controls echo-audio-player echo-sqlite-store echo-opencc echo-upnp echo-airplay echo-dlna-renderer)
           if [[ "$INCLUDE_PLATFORM_ADAPTOR" == "true" ]]; then
             addons+=(echo-platform-adaptor)
           fi

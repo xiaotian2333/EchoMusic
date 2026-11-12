@@ -10,6 +10,7 @@ import { waitForSqlitePersistHydration } from '@/stores/sqlitePersist';
 import { normalizeQuality } from '@/stores/player/utils';
 import { setupStartupPluginUpdateCheck } from '@/stores/pluginUpdates';
 import { registerContentBlacklistIntegration } from '@/services/contentBlacklistIntegration';
+import { useDlnaRendererBridge } from '@/stores/dlnaRenderer';
 import { installWindowFrame } from '@/utils/windowFrame';
 import { setOpenThemesHandler } from '@/theme/registry';
 import { settingsDialogOpen } from '@/composables/useSettingsDialog';
@@ -35,6 +36,10 @@ export function useAppRuntime(isMiniPlayerRoute: Readonly<Ref<boolean>>) {
   const appearance = useAppAppearance(player, isMiniPlayerRoute, lifetime);
   const share = useAppShare(isMiniPlayerRoute, lifetime);
   useAppUserSession(lifetime);
+  // DLNA 接收端桥（issue #516）：仅主窗口挂载，负责设置同步与投播 toast。
+  if (!isMiniPlayerRoute.value) {
+    lifetime.add(useDlnaRendererBridge());
+  }
   let syncGlobalShortcutsFn: SyncGlobalShortcuts | null = null;
 
   const trayTrackTitle = computed(() => {

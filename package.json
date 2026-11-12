@@ -199,6 +199,10 @@
       {
         "from": "native/echo-airplay/echo-airplay.node",
         "to": "native/echo-airplay.node"
+      },
+      {
+        "from": "native/echo-dlna-renderer/echo-dlna-renderer.node",
+        "to": "native/echo-dlna-renderer.node"
       }
     ],
     "mac": {

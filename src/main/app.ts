@@ -16,6 +16,7 @@ import {
 } from './desktopLyric';
 import { initPlayer, destroyPlayer } from './player';
 import { initOutputRuntime, shutdownOutputRuntime } from './outputs/outputRuntime';
+import { initDlnaRenderer, shutdownDlnaRenderer } from './mediaTransport/renderer';
 import { registerAudioSpectrumIpc, unregisterAudioSpectrumIpc } from './audioSpectrum';
 import { initMediaControls, destroyMediaControls } from './mediaControls';
 import { destroyAudioCapture } from './audioCapture';
@@ -193,6 +194,12 @@ if (!gotTheLock) {
     } catch (error) {
       log.error('[Main] Failed to init output session:', error);
     }
+    // DLNA 接收端（issue #516）：按持久化设置自动启动
+    try {
+      initDlnaRenderer(() => playerRef.current);
+    } catch (error) {
+      log.error('[Main] Failed to init DLNA renderer:', error);
+    }
     log.info('[Main] Pre-window initialization complete', {
       playerAvailable: !!playerRef.current,
       platform: process.platform,
@@ -307,6 +314,11 @@ if (!gotTheLock) {
           await shutdownOutputRuntime();
         } catch (err) {
           log.warn('[Main] Failed to stop remote output during shutdown:', err);
+        }
+        try {
+          await shutdownDlnaRenderer();
+        } catch (err) {
+          log.warn('[Main] Failed to stop DLNA renderer during shutdown:', err);
         }
         await terminatePluginProcesses();
         globalShortcut.unregisterAll();

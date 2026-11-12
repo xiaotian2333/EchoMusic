@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
 import Scrollbar from '@/components/ui/Scrollbar.vue';
 import Switch from '@/components/ui/Switch.vue';
@@ -14,6 +14,45 @@ const output = useOutputStore();
 const settingStore = useSettingStore();
 const pin = ref('');
 const pinTarget = ref('');
+
+// DLNA 接收端状态（echo-dlna-renderer）
+const rendererSupported = ref(true);
+const rendererRunning = ref(false);
+const rendererPort = ref<number | null>(null);
+const rendererNameInput = ref(settingStore.dlnaRendererName);
+
+const rendererStatusText = computed(() => {
+  if (!rendererSupported.value) return '本机缺少原生模块，接收端不可用';
+  if (!settingStore.dlnaRendererEnabled) return '未开启';
+  return rendererRunning.value && rendererPort.value
+    ? `等待投播：${settingStore.dlnaRendererName}（端口 ${rendererPort.value}）`
+    : '启动中…';
+});
+
+function refreshRendererStatus(): void {
+  void window.electron?.dlnaRenderer
+    ?.getStatus()
+    .then((status) => {
+      rendererSupported.value = status?.supported ?? false;
+      rendererRunning.value = Boolean(status?.running);
+      rendererPort.value = status?.port ?? null;
+    })
+    .catch(() => undefined);
+}
+
+// 名称输入只在提交（失焦/回车）时写回 store，由设置桥统一 apply，避免逐键重启。
+function commitRendererName(): void {
+  const name = rendererNameInput.value.trim() || 'EchoMusic';
+  rendererNameInput.value = name;
+  settingStore.dlnaRendererName = name;
+}
+
+watch(
+  () => settingStore.dlnaRendererName,
+  (name) => {
+    rendererNameInput.value = name;
+  },
+);
 
 const dlnaTargets = computed(() =>
   output.visibleTargets.filter((target) => target.protocol === 'dlna'),
@@ -44,6 +83,7 @@ const activeTitle = computed(() =>
 onMounted(() => {
   void output.bind();
   void output.setBrowsing(true);
+  refreshRendererStatus();
 });
 
 onUnmounted(() => {
@@ -232,6 +272,36 @@ function submitPin(): void {
         清除
       </button>
     </div>
+
+    <div class="settings-divider"></div>
+
+    <div class="settings-item">
+      <div class="space-y-1">
+        <h3 class="font-semibold">DLNA 投播接收</h3>
+        <p class="text-sm text-text-secondary">
+          在手机投播列表里显示本机；音频直接播放，视频仅播放音轨，播放列表/图片等暂不支持
+        </p>
+        <p class="cast-status" :class="{ warning: !rendererSupported }">
+          {{ rendererStatusText }}
+        </p>
+      </div>
+      <Switch v-model="settingStore.dlnaRendererEnabled" />
+    </div>
+
+    <div v-if="settingStore.dlnaRendererEnabled" class="settings-item">
+      <div class="space-y-1">
+        <h3 class="font-semibold">接收设备名称</h3>
+        <p class="text-sm text-text-secondary">改动后接收端会自动重启</p>
+      </div>
+      <input
+        v-model="rendererNameInput"
+        class="cast-name-input"
+        maxlength="40"
+        placeholder="EchoMusic"
+        @change="commitRendererName"
+        @keydown.enter.prevent="commitRendererName"
+      />
+    </div>
   </SettingsSectionShell>
 </template>
 
@@ -410,6 +480,18 @@ function submitPin(): void {
   height: var(--control-height-default);
   font-size: var(--field-font-size);
   width: 6rem;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-control);
+  background: var(--field-bg);
+  color: inherit;
+  padding: 0 var(--field-padding-x);
+}
+
+.cast-name-input {
+  box-sizing: border-box;
+  height: var(--control-height-default);
+  font-size: var(--field-font-size);
+  width: 11rem;
   border: 1px solid var(--control-border);
   border-radius: var(--radius-control);
   background: var(--field-bg);

@@ -193,6 +193,10 @@ export const useSettingStore = defineStore('setting', {
     outputDeviceStatusMessage: '',
     pauseOnOutputDeviceDisconnect: false,
     networkPlaybackEnabled: false,
+    // DLNA 接收端（issue #516）：设备名与 UDN 需要跨启动稳定，避免手机端反复见到"新设备"
+    dlnaRendererEnabled: false,
+    dlnaRendererName: 'EchoMusic',
+    dlnaRendererUdn: '',
     showAudioQualityBadge: true,
     showAudioEffectBadge: true,
     showDesktopLyricStatus: true,

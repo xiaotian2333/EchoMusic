@@ -934,6 +934,23 @@ export interface IElectronAPI {
     clearRecords: () => Promise<{ diagnostics?: string; searching?: boolean }>;
     onEvent: (func: (event: { type: string; payload?: unknown }) => void) => () => void;
   };
+  dlnaRenderer: {
+    applyConfig: (config: { enabled: boolean; name: string; udn: string }) => Promise<{
+      supported: boolean;
+      running: boolean;
+      port?: number;
+      ip?: string;
+      friendlyName?: string;
+    }>;
+    getStatus: () => Promise<{
+      supported: boolean;
+      running: boolean;
+      port?: number;
+      ip?: string;
+      friendlyName?: string;
+    }>;
+    onEvent: (func: (event: { type: string; payload?: unknown }) => void) => () => void;
+  };
   player: {
     getEmbeddedMetadata: (
       request: import('../shared/embeddedMetadata').EmbeddedMetadataRequest,

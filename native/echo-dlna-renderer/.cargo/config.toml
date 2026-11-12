@@ -1,0 +1,10 @@
+# Windows 上静态链接 MSVC C Runtime，与其他 echo-* addon 保持一致（零系统依赖）。
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

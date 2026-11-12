@@ -1831,6 +1831,19 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('output:event', listener);
     },
   },
+  dlnaRenderer: {
+    applyConfig: (config: { enabled: boolean; name: string; udn: string }) =>
+      ipcRenderer.invoke('dlnaRenderer:apply-config', config),
+    getStatus: () => ipcRenderer.invoke('dlnaRenderer:get-status'),
+    onEvent: (func: (event: { type: string; payload?: unknown }) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { type: string; payload?: unknown },
+      ) => func(data);
+      ipcRenderer.on('dlnaRenderer:event', listener);
+      return () => ipcRenderer.removeListener('dlnaRenderer:event', listener);
+    },
+  },
 });
 
 // 主窗口首屏在 Vue 和异步设置恢复之前使用已保存的主题。
