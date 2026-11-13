@@ -30,8 +30,8 @@ const DEFAULT_TIMEOUT_SEC: u32 = 300;
 const MAX_TIMEOUT_SEC: u32 = 1800;
 /// CALLBACK URL 长度上限。
 const MAX_CALLBACK_LEN: usize = 512;
-/// 单次 NOTIFY 投递超时。
-const NOTIFY_TIMEOUT: Duration = Duration::from_secs(4);
+/// 单次 NOTIFY 投递超时。过长会阻塞单消费者管道、拖慢后续事件（发送端状态感知滞后）。
+const NOTIFY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// 承载事件订阅的 UPnP 服务。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -190,7 +190,19 @@ function attachController(controller: PlayerController): void {
       return;
     }
 
-    const transport = playing ? 'PLAYING' : paused ? 'PAUSED_PLAYBACK' : 'STOPPED';
+    // 状态映射（发送端视角）：
+    // - 引擎瞬态（loading/buffering/output-reconfig 等载荷 playing=false && paused=false）
+    //   映射为 TRANSITIONING，绝不映射 STOPPED——否则发送端会把投播会话当成已中断
+    //   （表现为手机端一直"正在连接"或自动重新投放）；
+    // - STOPPED 只由显式路径写入（stop 动作、曲目结束、本地接管），一旦进入保持粘性，
+    //   避免随后的引擎 stop 回声把状态改回 TRANSITIONING。
+    const transport = playing
+      ? 'PLAYING'
+      : paused
+        ? 'PAUSED_PLAYBACK'
+        : lastTransportState === 'STOPPED'
+          ? 'STOPPED'
+          : 'TRANSITIONING';
     pushState(transport, {
       durationSecs: duration,
       relTimeSecs: timePos,
@@ -199,12 +211,13 @@ function attachController(controller: PlayerController): void {
   };
   const timeListener = (payload?: { time?: number }) => {
     if (typeof payload?.time === 'number') {
-      pushState(lastTransportState || 'PLAYING', { relTimeSecs: payload.time });
+      // 直接沿用当前会话状态，不用 || 兜底：陈旧的 STOPPED/PLAYING 兜底值会污染投播状态。
+      pushState(lastTransportState, { relTimeSecs: payload.time });
     }
   };
   const durationListener = (duration?: number) => {
     if (typeof duration === 'number') {
-      pushState(lastTransportState || 'STOPPED', { durationSecs: duration });
+      pushState(lastTransportState, { durationSecs: duration });
     }
   };
   const endListener = () => {
@@ -270,6 +283,9 @@ async function handleNativeEvent(event: NativeRendererEvent): Promise<void> {
       const uri = event.uri ?? '';
       castUri = uri;
       castTitle = event.title ?? '';
+      // 新会话起步：解除 STOPPED 粘性并推进 TRANSITIONING（与 native SetAVTransportURI
+      // 的提交一致，diff 无变化不产生多余 NOTIFY），避免上一曲的 STOPPED 泄漏进新会话。
+      pushState('TRANSITIONING', { currentUri: uri, title: castTitle });
       // 播放切换交给渲染层 player store：构造投播伪曲目走正规播放链，
       // 打断当前播放、播放栏标题/进度/SMTC 全部自动生效，队列保持不动。
       const activeController = getController?.() ?? null;

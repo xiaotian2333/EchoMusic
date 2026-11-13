@@ -533,14 +533,26 @@ impl RendererService {
                     soap_ok(AVT_NS, "SetAVTransportURI", "")
                 }
                 Ok(AVTransport::Play(_)) => {
+                    // 命令意图立即进状态缓存：发送端轮询 GetTransportInfo 马上能看到目标状态，
+                    // 避免引擎异步回声窗口内发送端误判"暂停没生效"而重发命令（表现即暂停后自动恢复）。
+                    commit_state(|state| {
+                        state.transport_state = "PLAYING".to_string();
+                    });
                     self.emit(ev("play"));
                     soap_ok(AVT_NS, "Play", "")
                 }
                 Ok(AVTransport::Pause(_)) => {
+                    commit_state(|state| {
+                        state.transport_state = "PAUSED_PLAYBACK".to_string();
+                    });
                     self.emit(ev("pause"));
                     soap_ok(AVT_NS, "Pause", "")
                 }
                 Ok(AVTransport::Stop(_)) => {
+                    commit_state(|state| {
+                        state.transport_state = "STOPPED".to_string();
+                        state.rel_time_secs = 0;
+                    });
                     self.emit(ev("stop"));
                     soap_ok(AVT_NS, "Stop", "")
                 }
