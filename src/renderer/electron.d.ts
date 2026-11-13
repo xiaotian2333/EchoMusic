@@ -953,6 +953,7 @@ export interface IElectronAPI {
     }>;
     pushState: (update: {
       transportState: 'STOPPED' | 'PLAYING' | 'PAUSED_PLAYBACK' | 'TRANSITIONING';
+      transportStatus?: 'OK' | 'ERROR_OCCURRED';
       currentUri?: string;
       title?: string;
       relTimeSecs?: number;

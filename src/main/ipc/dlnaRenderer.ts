@@ -13,13 +13,18 @@ import {
 
 export function registerDlnaRendererIpc(): void {
   ipcRegistry.registerHandler('dlnaRenderer:get-status', () => getDlnaRendererStatus());
-  // 插件接管投播会话时回推播放状态（capability 校验在渲染层 ctx.dlnaCast 完成）
+  // 插件接管投播会话时回推播放状态（capability 校验在渲染层 ctx.dlnaCast 完成）；
+  // 宿主 fallback 拒绝不支持内容时也经此回推 STOPPED + ERROR_OCCURRED。
   ipcRegistry.registerHandler('dlnaRenderer:push-state', (_event, update: unknown) => {
     if (!update || typeof update !== 'object') return;
     const raw = update as Record<string, unknown>;
     if (typeof raw.transportState !== 'string') return;
     pushDlnaCastState({
       transportState: raw.transportState,
+      transportStatus:
+        raw.transportStatus === 'OK' || raw.transportStatus === 'ERROR_OCCURRED'
+          ? raw.transportStatus
+          : undefined,
       currentUri: typeof raw.currentUri === 'string' ? raw.currentUri : undefined,
       title: typeof raw.title === 'string' ? raw.title : undefined,
       relTimeSecs: typeof raw.relTimeSecs === 'number' ? raw.relTimeSecs : undefined,

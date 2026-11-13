@@ -6,6 +6,9 @@
 //! - AVTransport / RenderingControl / ConnectionManager 三服务的应答在 native 侧完成，
 //!   播放动作以事件形式回调 JS，由 TS 桥接层对接 PlayerController
 //! - Get* 查询动作根据 JS 推送的状态缓存（update_renderer_state）直接应答
+//! - SetAVTransportURI 不预拒绝内容：播放列表/图片等的拒绝判定在渲染层插件
+//!   拦截链之后进行（TS 侧 shared/dlnaCastContent），无插件接管时经
+//!   update_renderer_state 回推 STOPPED + ERROR_OCCURRED 让发送端看到失败
 
 use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -83,12 +86,6 @@ http-get:*:audio/x-ms-wma:*,http-get:*:audio/x-ape:*,http-get:*:audio/ape:*,\
 http-get:*:video/mp4:*,http-get:*:video/x-matroska:*,http-get:*:video/quicktime:*,\
 http-get:*:video/x-msvideo:*,http-get:*:video/avi:*";
 
-/// 明确不支持的 URI 扩展名：播放列表/流媒体清单、图片、字幕、文档等。
-const UNSUPPORTED_EXTS: &[&str] = &[
-    "m3u8", "m3u", "mpd", "smil", "asx", "pls", "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg",
-    "srt", "ass", "ssa", "txt", "pdf", "html", "htm", "xml",
-];
-
 // ---------------------------------------------------------------------------
 // NAPI 对象定义
 // ---------------------------------------------------------------------------
@@ -112,9 +109,9 @@ pub struct DlnaRendererOptions {
 #[derive(Default, Clone)]
 pub struct DlnaRendererEvent {
     /// 事件类型：set-av-transport-uri / play / pause / stop / seek / next / previous /
-    /// set-volume / set-mute / unsupported / started / stopped
+    /// set-volume / set-mute / started / stopped
     pub kind: String,
-    /// 投播 URI（set-av-transport-uri / unsupported）。
+    /// 投播 URI（set-av-transport-uri）。
     pub uri: Option<String>,
     /// DIDL-Lite 原始元数据（set-av-transport-uri）。
     pub metadata: Option<String>,
@@ -132,7 +129,7 @@ pub struct DlnaRendererEvent {
     pub port: Option<u32>,
     /// 绑定的 IP（started）。
     pub ip: Option<String>,
-    /// 不支持原因（unsupported）。
+    /// 保留字段（预留诊断信息）。
     pub reason: Option<String>,
 }
 
@@ -141,6 +138,8 @@ pub struct DlnaRendererEvent {
 pub struct DlnaRendererStateUpdate {
     /// UPnP TransportState：STOPPED / PLAYING / PAUSED_PLAYBACK / TRANSITIONING
     pub transport_state: String,
+    /// UPnP TransportStatus：OK / ERROR_OCCURRED（缺省保持现值）。
+    pub transport_status: Option<String>,
     /// 当前 URI。
     pub current_uri: Option<String>,
     /// 当前标题。
@@ -176,6 +175,8 @@ pub struct DlnaRendererStatus {
 #[derive(Clone, Debug)]
 struct PlaybackState {
     transport_state: String,
+    /// UPnP TransportStatus：OK / ERROR_OCCURRED（投播失败时由 JS 回推）。
+    transport_status: String,
     current_uri: String,
     title: String,
     rel_time_secs: u32,
@@ -188,6 +189,7 @@ impl PlaybackState {
     const fn new() -> Self {
         Self {
             transport_state: String::new(), // 空串视作 STOPPED
+            transport_status: String::new(), // 空串视作 OK
             current_uri: String::new(),
             title: String::new(),
             rel_time_secs: 0,
@@ -205,12 +207,22 @@ impl PlaybackState {
             &self.transport_state
         }
     }
+
+    /// UPnP TransportStatus；空串归一化为 OK。
+    fn upnp_transport_status(&self) -> &str {
+        if self.transport_status.is_empty() {
+            "OK"
+        } else {
+            &self.transport_status
+        }
+    }
 }
 
 /// 事件面字段快照（GENA NOTIFY 关心的最小集合；位置进度不进事件，由 Get* 轮询获取）。
 #[derive(Clone, PartialEq, Eq)]
 struct EventedFields {
     transport_state: String,
+    transport_status: String,
     current_uri: String,
     duration_secs: u32,
     volume: u8,
@@ -221,6 +233,7 @@ impl EventedFields {
     fn of(state: &PlaybackState) -> Self {
         Self {
             transport_state: state.upnp_transport_state().to_string(),
+            transport_status: state.upnp_transport_status().to_string(),
             current_uri: state.current_uri.clone(),
             duration_secs: state.duration_secs,
             volume: state.volume,
@@ -232,6 +245,7 @@ impl EventedFields {
 fn diff_evented(before: &EventedFields, after: &EventedFields) -> gena::StateDiff {
     gena::StateDiff {
         transport_changed: before.transport_state != after.transport_state
+            || before.transport_status != after.transport_status
             || before.current_uri != after.current_uri
             || before.duration_secs != after.duration_secs,
         volume_changed: before.volume != after.volume || before.mute != after.mute,
@@ -255,13 +269,14 @@ fn commit_state(update: impl FnOnce(&mut PlaybackState)) {
 }
 
 /// 事件组装用的状态快照（gena.rs 消费者调用）。
-pub(crate) fn playback_event_snapshot() -> (String, String, u32, u8, bool) {
+pub(crate) fn playback_event_snapshot() -> (String, String, String, u32, u8, bool) {
     let state = PLAYBACK
         .read()
         .map(|s| s.clone())
         .unwrap_or_else(|_| PlaybackState::new());
     (
         state.upnp_transport_state().to_string(),
+        state.upnp_transport_status().to_string(),
         state.current_uri,
         state.duration_secs,
         state.volume,
@@ -301,28 +316,6 @@ fn ev(kind: &str) -> DlnaRendererEvent {
 /// UPnP 时间格式 H:MM:SS。
 pub(crate) fn format_upnp_time(secs: u32) -> String {
     format!("{}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
-}
-
-/// 判断 URI 是否属于明确不支持的内容，返回给发送端展示的原因。
-fn uri_unsupported(uri: &str) -> Option<&'static str> {
-    let lower = uri.to_ascii_lowercase();
-    // 协议白名单：仅 http/https 直链（发送端投本地路径的场景不支持）。
-    let (scheme, rest) = lower.split_once("://")?;
-    if !matches!(scheme, "http" | "https") {
-        return Some("仅支持 http/https 直链投播");
-    }
-    let _ = rest;
-    // 扩展名检查（去掉 query 与 fragment）。
-    let path = lower.split(['?', '#']).next().unwrap_or("");
-    let filename = path.rsplit('/').next().unwrap_or("");
-    if !filename.contains('.') {
-        return None;
-    }
-    let ext = filename.rsplit('.').next().unwrap_or("");
-    if UNSUPPORTED_EXTS.contains(&ext) {
-        return Some("该内容类型暂不支持（播放列表/图片/文档等）");
-    }
-    None
 }
 
 /// 从 DIDL-Lite 元数据中提取 dc:title。
@@ -505,22 +498,17 @@ impl RendererService {
                     if uri.trim().is_empty() {
                         return soap_fault(402, "CurrentURI is empty");
                     }
-                    if let Some(reason) = uri_unsupported(&uri) {
-                        self.emit(DlnaRendererEvent {
-                            uri: Some(uri),
-                            reason: Some(reason.to_string()),
-                            ..ev("unsupported")
-                        });
-                        // 714 Illegal MIME-type：发送端会立即提示投播失败。
-                        return soap_fault(714, "Illegal MIME-type");
-                    }
+                    // 不在此预拒绝内容（播放列表/图片等）：事件先经渲染层插件拦截链，
+                    // 无插件接管时由宿主 fallback 回推 STOPPED + ERROR_OCCURRED。
                     let title =
                         title_from_metadata(&set.current_uri_meta_data).unwrap_or_default();
                     // 走 commit_state：锁异常静默跳过，URI/状态变化会驱动 GENA NOTIFY。
+                    // 新会话重置 TransportStatus（上一会话可能遗留 ERROR_OCCURRED）。
                     commit_state(|state| {
                         state.current_uri = uri.clone();
                         state.title = title.clone();
                         state.transport_state = "TRANSITIONING".to_string();
+                        state.transport_status = "OK".to_string();
                         state.rel_time_secs = 0;
                         state.duration_secs = 0;
                     });
@@ -577,13 +565,15 @@ impl RendererService {
                     soap_ok(AVT_NS, "SetNextAVTransportURI", "")
                 }
                 Ok(AVTransport::GetTransportInfo(_)) => {
-                    let state = Self::snapshot().upnp_transport_state().to_string();
+                    let snapshot = Self::snapshot();
                     soap_ok(
                         AVT_NS,
                         "GetTransportInfo",
                         &format!(
-                            "<CurrentTransportState>{state}</CurrentTransportState>\
-<CurrentTransportStatus>OK</CurrentTransportStatus><CurrentSpeed>1</CurrentSpeed>"
+                            "<CurrentTransportState>{}</CurrentTransportState>\
+<CurrentTransportStatus>{}</CurrentTransportStatus><CurrentSpeed>1</CurrentSpeed>",
+                            snapshot.upnp_transport_state(),
+                            snapshot.upnp_transport_status(),
                         ),
                     )
                 }
@@ -881,6 +871,7 @@ async fn start_renderer_inner(
     // 重置播放状态缓存，等待上层推送真实状态。
     if let Ok(mut state) = PLAYBACK.write() {
         state.transport_state = "STOPPED".to_string();
+        state.transport_status = "OK".to_string();
         state.current_uri = String::new();
         state.title = String::new();
         state.rel_time_secs = 0;
@@ -948,9 +939,15 @@ pub async fn stop_renderer() -> Result<()> {
 /// JS 推送播放状态缓存（来自 PlayerController 事件）。
 #[napi]
 pub fn update_renderer_state(update: DlnaRendererStateUpdate) -> Result<()> {
-    // 走 commit_state：事件面字段（TransportState/URI/时长/音量/静音）变化时驱动 GENA NOTIFY。
+    // 走 commit_state：事件面字段（TransportState/Status/URI/时长/音量/静音）变化时驱动 GENA NOTIFY。
     commit_state(|state| {
         state.transport_state = update.transport_state;
+        if let Some(status) = update.transport_status {
+            // 仅接受规范取值，防止任意字符串进入 SOAP 应答。
+            if status == "OK" || status == "ERROR_OCCURRED" {
+                state.transport_status = status;
+            }
+        }
         if let Some(uri) = update.current_uri {
             state.current_uri = uri;
         }

@@ -256,13 +256,19 @@ pub fn handle_unsubscribe(sid_header: Option<&str>) -> GenaResponse {
 
 /// AVTransport LastChange 的内嵌 Event XML（属性值已转义）。
 /// 字段与发送端 genaReceiver.parseLastChange 的 knownKeys 对齐。
-pub fn build_avt_lastchange(transport_state: &str, current_uri: &str, duration_secs: u32) -> String {
+pub fn build_avt_lastchange(
+    transport_state: &str,
+    transport_status: &str,
+    current_uri: &str,
+    duration_secs: u32,
+) -> String {
     let uri = quick_xml::escape::escape(current_uri);
+    let status = quick_xml::escape::escape(transport_status);
     format!(
         "<Event xmlns=\"urn:schemas-upnp-org:metadata-1-0/AVT/\">\
 <InstanceID val=\"0\">\
 <TransportState val=\"{transport_state}\"/>\
-<TransportStatus val=\"OK\"/>\
+<TransportStatus val=\"{status}\"/>\
 <AVTransportURI val=\"{uri}\"/>\
 <CurrentTrackURI val=\"{uri}\"/>\
 <CurrentTrackDuration val=\"{}\"/>\
@@ -313,11 +319,12 @@ pub fn wrap_propertyset(properties_xml: &str) -> String {
 
 /// 组装服务当前状态的事件 body（初始事件与变更事件共用）。
 fn event_body(service: GenaService) -> String {
-    let (transport_state, current_uri, duration_secs, volume, mute) =
+    let (transport_state, transport_status, current_uri, duration_secs, volume, mute) =
         crate::playback_event_snapshot();
     let properties = match service {
         GenaService::AVTransport => lastchange_property(&build_avt_lastchange(
             &transport_state,
+            &transport_status,
             &current_uri,
             duration_secs,
         )),
@@ -597,9 +604,10 @@ mod tests {
 
     #[test]
     fn builds_avt_lastchange_with_escaping() {
-        let xml = build_avt_lastchange("PLAYING", "http://host/a&b.mp3", 205);
+        let xml = build_avt_lastchange("STOPPED", "ERROR_OCCURRED", "http://host/a&b.mp3", 205);
         assert!(xml.starts_with("<Event xmlns=\"urn:schemas-upnp-org:metadata-1-0/AVT/\">"));
-        assert!(xml.contains("<TransportState val=\"PLAYING\"/>"));
+        assert!(xml.contains("<TransportState val=\"STOPPED\"/>"));
+        assert!(xml.contains("<TransportStatus val=\"ERROR_OCCURRED\"/>"));
         // & 必须转义，避免内嵌 XML 破坏结构。
         assert!(xml.contains("http://host/a&amp;b.mp3"));
         assert!(xml.contains("<CurrentTrackDuration val=\"0:03:25\"/>"));

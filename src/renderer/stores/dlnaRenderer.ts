@@ -14,6 +14,7 @@ import { useSettingStore } from './setting';
 import { usePlayerStore } from './player';
 import { useToastStore } from './toast';
 import { runDlnaCastInterceptorChain } from '@/plugins/dlnaCast';
+import { classifyCastUri } from '../../shared/dlnaCastContent';
 import type { PluginDlnaCastEvent, PluginDlnaCastEventKind } from '../../shared/plugins';
 import type { ResolvedAudioSource } from './player/types';
 import type { Song } from '@/models/song';
@@ -42,6 +43,11 @@ function parseRelTime(target: unknown): number | null {
 
 /** 当前活跃的投播伪曲目 id（null = 无投播会话）。 */
 let castTrackId: string | null = null;
+/**
+ * 拒绝新投播（无插件接管且内容不支持）时会主动结束旧投播会话，
+ * 由此产生的 takeover 事件不弹"本机播放已接管"提示，只弹拒绝提示。
+ */
+let suppressTakeoverToast = false;
 
 /** 构造投播伪曲目：走正规播放链展示标题/进度，但不进目录与歌词匹配。 */
 function buildCastSong(uri: string, title: string, durationSecs: number): Song {
@@ -99,6 +105,26 @@ export function useDlnaRendererBridge(): () => void {
     const uri = typeof payload.uri === 'string' ? payload.uri : '';
     if (!uri) return;
     const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+    // 宿主默认拒绝发生在插件拦截链之后：走到这里说明没有插件接管本条投播。
+    // 播放列表/图片等内容的接管由插件拦截 set-av-transport-uri 完成。
+    const verdict = classifyCastUri(uri);
+    if (!verdict.supported) {
+      if (castTrackId && String(player.currentTrackId ?? '') === castTrackId) {
+        // UPnP 语义：SetAVTransportURI 会替换当前曲目；宿主无法播放新 URI 时结束旧会话，
+        // 停掉播放并让发送端看到失败（STOPPED + ERROR_OCCURRED）。
+        suppressTakeoverToast = true;
+        clearCastSession();
+        player.stop();
+      }
+      void api?.pushState({ transportState: 'STOPPED', transportStatus: 'ERROR_OCCURRED' });
+      useToastStore().show(
+        `不支持该内容：${verdict.reason ?? '格式或协议不受支持'}`,
+        'warning',
+        5000,
+      );
+      return;
+    }
+    suppressTakeoverToast = false;
     const song = buildCastSong(uri, title, 0);
     castTrackId = song.id;
     // 投播接管：播完自然暂停不推进队列；恢复时机见 clearCastSession。
@@ -219,6 +245,11 @@ export function useDlnaRendererBridge(): () => void {
         clearCastSession();
         dispatchCastEvent({ kind: 'session-end', reason: str('reason') }, () => {
           if (payload.reason === 'takeover') {
+            // 拒绝投播（内容不支持）引发的主动停止不算"本地接管"，不弹接管提示。
+            if (suppressTakeoverToast) {
+              suppressTakeoverToast = false;
+              return;
+            }
             toast.show('本机播放已接管，投播会话结束', 'info', 3500);
           } else if (payload.reason === 'sender-stop') {
             toast.show('投播已停止', 'info', 3000);

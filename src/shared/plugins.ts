@@ -486,6 +486,10 @@ export interface PluginServerInterceptOptions {
 /**
  * DLNA 投放事件类型（capabilities.dlnaCast 接管能力可见的完整数据）。
  * 事件由宿主 DLNA 接收端（echo-dlna-renderer）产生，经拦截链分发给插件。
+ *
+ * 注意：native 不再预拒绝播放列表/图片等内容——set-av-transport-uri 事件先过拦截链，
+ * 插件可拦截接管任意内容（如解析 m3u8 取音轨）；无插件接管时宿主 fallback 才按
+ * shared/dlnaCastContent 的判定拒绝（回推 STOPPED + ERROR_OCCURRED）。
  */
 export type PluginDlnaCastEventKind =
   | 'set-av-transport-uri'
@@ -523,6 +527,11 @@ export interface PluginDlnaCastEvent {
 export interface PluginDlnaCastStateUpdate {
   /** UPnP TransportState：STOPPED / PLAYING / PAUSED_PLAYBACK / TRANSITIONING */
   transportState: 'STOPPED' | 'PLAYING' | 'PAUSED_PLAYBACK' | 'TRANSITIONING';
+  /**
+   * UPnP TransportStatus。插件接管后播放失败时回推 ERROR_OCCURRED，
+   * 发送端经 GetTransportInfo 看到投播失败。缺省保持 OK。
+   */
+  transportStatus?: 'OK' | 'ERROR_OCCURRED';
   currentUri?: string;
   title?: string;
   relTimeSecs?: number;

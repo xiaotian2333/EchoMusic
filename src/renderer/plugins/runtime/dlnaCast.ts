@@ -74,6 +74,10 @@ export const createDlnaCastApi = (
     }
     deps.pushState({
       transportState: state.transportState,
+      transportStatus:
+        state.transportStatus === 'OK' || state.transportStatus === 'ERROR_OCCURRED'
+          ? state.transportStatus
+          : undefined,
       currentUri: typeof state.currentUri === 'string' ? state.currentUri : undefined,
       title: typeof state.title === 'string' ? state.title : undefined,
       relTimeSecs: typeof state.relTimeSecs === 'number' ? state.relTimeSecs : undefined,

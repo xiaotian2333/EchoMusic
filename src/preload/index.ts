@@ -1837,6 +1837,7 @@ contextBridge.exposeInMainWorld('electron', {
     getStatus: () => ipcRenderer.invoke('dlnaRenderer:get-status'),
     pushState: (update: {
       transportState: 'STOPPED' | 'PLAYING' | 'PAUSED_PLAYBACK' | 'TRANSITIONING';
+      transportStatus?: 'OK' | 'ERROR_OCCURRED';
       currentUri?: string;
       title?: string;
       relTimeSecs?: number;

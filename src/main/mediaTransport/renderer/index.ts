@@ -5,8 +5,9 @@
  * - 协议（SSDP/SOAP/SCPD）全部在 native 侧完成
  * - 本模块把 native 事件对接到 PlayerController（loadFile/play/seek 等），
  *   并把播放器状态回推给 native 以应答发送端的 Get* 查询
- * - 音频直接解码播放；视频文件由解码器自动提取音频轨；m3u8/图片等在
- *   native 侧直接 SOAP fault 714 并推送 unsupported 事件
+ * - 音频直接解码播放；视频文件由解码器自动提取音频轨；m3u8/图片等内容的
+ *   拒绝在渲染层插件拦截链之后进行（shared/dlnaCastContent 判定），无插件
+ *   接管时回推 STOPPED + ERROR_OCCURRED 让发送端看到投播失败
  */
 import { app } from 'electron';
 import fs from 'node:fs';
@@ -50,6 +51,7 @@ interface NativeRendererApi {
   stopRenderer(): Promise<void>;
   updateRendererState(update: {
     transportState: string;
+    transportStatus?: string;
     currentUri?: string;
     title?: string;
     relTimeSecs?: number;
@@ -488,6 +490,7 @@ export async function shutdownDlnaRenderer(): Promise<void> {
 /** 插件接管投播会话时回推播放状态（native 未运行时忽略）。 */
 export function pushDlnaCastState(update: {
   transportState: string;
+  transportStatus?: 'OK' | 'ERROR_OCCURRED';
   currentUri?: string;
   title?: string;
   relTimeSecs?: number;
