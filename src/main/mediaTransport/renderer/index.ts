@@ -141,15 +141,6 @@ function publishToRenderer(type: string, payload?: Record<string, unknown>): voi
   getMainWindow()?.webContents.send('dlnaRenderer:event', { type, payload });
 }
 
-/** 解析 REL_TIME（H:MM:SS / MM:SS）为秒。 */
-function parseRelTime(target: string): number | null {
-  const parts = target.split(':').map((part) => Number(part));
-  if (parts.some((part) => !Number.isFinite(part))) return null;
-  if (parts.length === 3) return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
-  if (parts.length === 2) return Math.max(0, parts[0] * 60 + parts[1]);
-  return null;
-}
-
 /** 推送状态到 native 缓存（native 用它应答发送端的 Get* 查询）。 */
 function pushState(
   transportState: string,
@@ -219,13 +210,10 @@ function attachController(controller: PlayerController): void {
   };
   const errorListener = (payload?: { message?: string }) => {
     if (!castUri) return;
+    // 播放失败的提示由渲染层 player store 的 notice 通道负责，这里只让
+    // 手机端看到投播会话已停止。
     log.warn('[DlnaRenderer] 投播内容播放出错:', payload?.message ?? payload);
     pushState('STOPPED');
-    publishToRenderer('cast-failed', {
-      uri: castUri,
-      title: castTitle,
-      reason: payload?.message,
-    });
   };
 
   controller.on('state-change', stateListener);
@@ -255,7 +243,6 @@ function detachController(): void {
 
 /** 处理 native 事件。 */
 async function handleNativeEvent(event: NativeRendererEvent): Promise<void> {
-  const controller = getController?.() ?? null;
   switch (event.kind) {
     case 'started': {
       log.info(
@@ -279,37 +266,23 @@ async function handleNativeEvent(event: NativeRendererEvent): Promise<void> {
       const uri = event.uri ?? '';
       castUri = uri;
       castTitle = event.title ?? '';
-      if (!controller) {
-        log.warn('[DlnaRenderer] 收到投播但播放引擎不可用');
-        pushState('STOPPED', { currentUri: uri, title: castTitle });
-        publishToRenderer('cast-failed', { uri, title: castTitle, reason: '播放引擎不可用' });
-        return;
-      }
-      attachControllerOnce(controller);
-      try {
-        // SetAVTransportURI 后自动起播；发送端随后发的 Play 调用是幂等确认。
-        await controller.loadFile(uri);
-        await controller.play();
-        pushState('PLAYING', { currentUri: uri, title: castTitle });
-        publishToRenderer('cast-received', { uri, title: castTitle });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        log.warn(`[DlnaRenderer] 投播加载失败（${uri}）: ${reason}`);
-        pushState('STOPPED', { currentUri: uri, title: castTitle });
-        publishToRenderer('cast-failed', { uri, title: castTitle, reason });
-      }
+      // 播放切换交给渲染层 player store：构造投播伪曲目走正规播放链，
+      // 打断当前播放、播放栏标题/进度/SMTC 全部自动生效，队列保持不动。
+      const activeController = getController?.() ?? null;
+      if (activeController) attachControllerOnce(activeController);
+      publishToRenderer('cast-request', { uri, title: castTitle });
       return;
     }
     case 'play': {
-      await controller?.play().catch(() => undefined);
+      publishToRenderer('cast-control', { action: 'play' });
       return;
     }
     case 'pause': {
-      controller?.pause();
+      publishToRenderer('cast-control', { action: 'pause' });
       return;
     }
     case 'stop': {
-      controller?.stop();
+      publishToRenderer('cast-control', { action: 'stop' });
       castUri = null;
       castTitle = '';
       pushState('STOPPED', { currentUri: '', title: '' });
@@ -317,23 +290,15 @@ async function handleNativeEvent(event: NativeRendererEvent): Promise<void> {
       return;
     }
     case 'seek': {
-      if (!controller) return;
-      if (event.unit === 'REL_TIME') {
-        const secs = parseRelTime(event.target ?? '');
-        if (secs !== null) await controller.seek(secs).catch(() => undefined);
-        return;
-      }
-      // ABS_COUNT（单曲目恒为 1）与 TRACK_NR（无队列语义）阶段一不做处理。
-      const secs = Number(event.target);
-      if (event.unit === 'ABS_COUNT' && Number.isFinite(secs) && secs > 0) {
-        await controller.seek(secs).catch(() => undefined);
-      }
+      publishToRenderer('cast-control', {
+        action: 'seek',
+        unit: event.unit,
+        target: event.target,
+      });
       return;
     }
     case 'set-volume': {
-      if (typeof event.value === 'number' && controller) {
-        controller.setVolume(Math.min(100, Math.max(0, event.value)));
-      }
+      publishToRenderer('cast-control', { action: 'set-volume', value: event.value });
       return;
     }
     case 'set-mute':
