@@ -80,11 +80,15 @@ export interface DlnaRendererStatusView {
   port?: number;
   ip?: string;
   friendlyName?: string;
+  /** 最近一次启动失败的可见原因（null/undefined = 无）。 */
+  lastError?: string | null;
 }
 
 let native: NativeRendererApi | null | undefined; // undefined 表示尚未探测
 let started = false;
 let startingPromise: Promise<void> | null = null;
+/** 最近一次启动失败的可见原因（null = 无），随状态查询暴露给设置界面。 */
+let lastStartError: string | null = null;
 let currentConfig: DlnaRendererConfig | null = null;
 let getController: (() => PlayerController | null) | null = null;
 /** 当前投播中的 URI（null = 无投播会话），用于识别本地切歌接管。 */
@@ -331,7 +335,8 @@ async function startRenderer(config: DlnaRendererConfig): Promise<void> {
   const lanIp = pickLanIpv4();
   if (!lanIp) {
     log.warn('[DlnaRenderer] 未找到可用的局域网 IPv4，接收端启动失败');
-    publishToRenderer('cast-failed', { reason: '未找到可用的局域网 IP' });
+    lastStartError = '未找到可用的局域网 IP';
+    publishToRenderer('cast-failed', { reason: lastStartError });
     return;
   }
   startingPromise = (async () => {
@@ -351,8 +356,15 @@ async function startRenderer(config: DlnaRendererConfig): Promise<void> {
         },
       );
       started = true;
+      lastStartError = null;
       currentConfig = config;
       log.info(`[DlnaRenderer] 接收端已启动（${lanIp}，设备名：${config.name}）`);
+    } catch (error) {
+      // 启动失败不再向上抛（IPC handler 抛错只会静默）；落到状态里并提示，UI 可重试。
+      const reason = error instanceof Error ? error.message : String(error);
+      lastStartError = reason;
+      log.warn(`[DlnaRenderer] 接收端启动失败: ${reason}`);
+      publishToRenderer('cast-failed', { reason });
     } finally {
       startingPromise = null;
     }
@@ -375,6 +387,7 @@ async function stopRendererInternal(): Promise<void> {
   castUri = null;
   castTitle = '';
   lastTransportState = '';
+  lastStartError = null;
   detachController();
 }
 
@@ -417,6 +430,7 @@ function statusView(): DlnaRendererStatusView {
     port: nativeStatus?.port,
     ip: nativeStatus?.ip,
     friendlyName: nativeStatus?.friendlyName,
+    lastError: lastStartError,
   };
 }
 

@@ -941,6 +941,7 @@ export interface IElectronAPI {
       port?: number;
       ip?: string;
       friendlyName?: string;
+      lastError?: string | null;
     }>;
     getStatus: () => Promise<{
       supported: boolean;
@@ -948,6 +949,7 @@ export interface IElectronAPI {
       port?: number;
       ip?: string;
       friendlyName?: string;
+      lastError?: string | null;
     }>;
     pushState: (update: {
       transportState: 'STOPPED' | 'PLAYING' | 'PAUSED_PLAYBACK' | 'TRANSITIONING';

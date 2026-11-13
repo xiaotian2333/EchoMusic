@@ -19,11 +19,13 @@ const pinTarget = ref('');
 const rendererSupported = ref(true);
 const rendererRunning = ref(false);
 const rendererPort = ref<number | null>(null);
+const rendererLastError = ref<string | null>(null);
 const rendererNameInput = ref(settingStore.dlnaRendererName);
 
 const rendererStatusText = computed(() => {
   if (!rendererSupported.value) return '本机缺少原生模块，接收端不可用';
   if (!settingStore.dlnaRendererEnabled) return '未开启';
+  if (rendererLastError.value) return `启动失败：${rendererLastError.value}`;
   return rendererRunning.value && rendererPort.value
     ? `等待投播：${settingStore.dlnaRendererName}（端口 ${rendererPort.value}）`
     : '启动中…';
@@ -36,6 +38,7 @@ function refreshRendererStatus(): void {
       rendererSupported.value = status?.supported ?? false;
       rendererRunning.value = Boolean(status?.running);
       rendererPort.value = status?.port ?? null;
+      rendererLastError.value = status?.lastError ?? null;
     })
     .catch(() => undefined);
 }
@@ -80,13 +83,40 @@ const activeTitle = computed(() =>
   remoteActive.value ? output.snapshot?.displayName || '远端设备' : '本机播放',
 );
 
+// 接收端状态轮询：启动失败/恢复的 lastError 与 running 需要动态反映到文案。
+let rendererStatusTimer: ReturnType<typeof setInterval> | null = null;
+
+function startRendererStatusPolling(): void {
+  if (rendererStatusTimer) return;
+  refreshRendererStatus();
+  rendererStatusTimer = setInterval(refreshRendererStatus, 3000);
+}
+
+function stopRendererStatusPolling(): void {
+  if (rendererStatusTimer) {
+    clearInterval(rendererStatusTimer);
+    rendererStatusTimer = null;
+  }
+}
+
+watch(
+  () => settingStore.dlnaRendererEnabled,
+  (enabled) => {
+    if (enabled) startRendererStatusPolling();
+    else stopRendererStatusPolling();
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   void output.bind();
   void output.setBrowsing(true);
   refreshRendererStatus();
+  if (settingStore.dlnaRendererEnabled) startRendererStatusPolling();
 });
 
 onUnmounted(() => {
+  stopRendererStatusPolling();
   void output.setBrowsing(false);
 });
 

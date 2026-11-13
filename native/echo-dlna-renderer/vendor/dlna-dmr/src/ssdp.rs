@@ -34,6 +34,11 @@ impl SSDPServer {
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         socket.set_nonblocking(true)?;
         socket.set_reuse_address(true)?;
+        // 补丁 8：unix 上再设 SO_REUSEPORT——BSD/macOS 内核要求双方都带 REUSEPORT 才允许
+        // 共存绑定同一 UDP 端口（libuv 的 reuseAddr 在 macOS 同时设 ADDR+PORT，若本端只有
+        // ADDR 会 EADDRINUSE，导致宿主自带 SSDP 监听与渲染端无法共存）。
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
         socket.bind(&SockAddr::from(SocketAddrV4::new(
             Ipv4Addr::UNSPECIFIED,
             address.port(),
