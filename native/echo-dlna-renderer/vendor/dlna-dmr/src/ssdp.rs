@@ -115,6 +115,15 @@ impl SSDPServer {
         .await?;
         self.notify(&uuid_with_prefix, nts, &uuid_with_prefix)
             .await?;
+        // 补丁 7：设备类型宣告（alive/byebye 均需覆盖，部分控制点只认设备类型 NT）。
+        self.notify(
+            "urn:schemas-upnp-org:device:MediaRenderer:1",
+            nts,
+            &format!(
+                "{uuid_with_prefix}::urn:schemas-upnp-org:device:MediaRenderer:1"
+            ),
+        )
+        .await?;
         for service in ["RenderingControl", "AVTransport", "ConnectionManager"] {
             self.notify_service(service, nts).await?;
         }
@@ -176,9 +185,13 @@ impl SSDPServer {
             .unwrap_or_else(|| "upnp:rootdevice".to_string());
 
         // 仅对自身宣告的搜索目标应答；ssdp:all 时逐个应答。
-        let own_targets: [String; 5] = [
+        // 补丁 7：补设备类型 ST（MediaRenderer:1/2）——部分控制点只按设备类型搜索，
+        // :2 未在描述中宣告但与 EchoMusic 自身 discovery.ts 的搜索目标对齐。
+        let own_targets: [String; 7] = [
             "upnp:rootdevice".to_string(),
             format!("uuid:{}", self.uuid),
+            "urn:schemas-upnp-org:device:MediaRenderer:1".to_string(),
+            "urn:schemas-upnp-org:device:MediaRenderer:2".to_string(),
             "urn:schemas-upnp-org:service:RenderingControl:1".to_string(),
             "urn:schemas-upnp-org:service:AVTransport:1".to_string(),
             "urn:schemas-upnp-org:service:ConnectionManager:1".to_string(),

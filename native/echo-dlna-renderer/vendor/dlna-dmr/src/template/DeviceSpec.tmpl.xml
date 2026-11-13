@@ -22,21 +22,21 @@
 				<serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
 				<serviceId>urn:upnp-org:serviceId:RenderingControl</serviceId>
 				<controlURL>/RenderingControl</controlURL>
-				<eventSubURL/>
+				<eventSubURL>/RenderingControl/event</eventSubURL>
 				<SCPDURL>/RenderingControl</SCPDURL>
 			</service>
 			<service>
 				<serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
 				<serviceId>urn:upnp-org:serviceId:AVTransport</serviceId>
 				<controlURL>/AVTransport</controlURL>
-				<eventSubURL/>
+				<eventSubURL>/AVTransport/event</eventSubURL>
 				<SCPDURL>/AVTransport</SCPDURL>
 			</service>
 			<service>
 				<serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
 				<serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>
 				<controlURL>/Ignore</controlURL>
-				<eventSubURL/>
+				<eventSubURL>/Ignore/event</eventSubURL>
 				<SCPDURL>/Ignore</SCPDURL>
 			</service>
 		</serviceList>

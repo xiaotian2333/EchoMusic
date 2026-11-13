@@ -6,6 +6,8 @@
 # 4. M-SEARCH 应答 LOCATION 路径与 NOTIFY 统一为 /description.xml（上游为 /DeviceSpec）
 # 5. 修复 SeekUnit Display 实现中 TRACK_NR / REL_TIME 的互换错误
 # 6. 移除依赖测试夹具的 tests 模块与仅适用于独立二进制的 [profile.release]
+# 7. M-SEARCH 应答与 alive/byebye 宣告补设备类型 ST（MediaRenderer:1/2），
+#    否则仅按设备类型搜索的控制点发现不了设备
 [package]
 name = "dlna-dmr"
 version = "0.1.3"

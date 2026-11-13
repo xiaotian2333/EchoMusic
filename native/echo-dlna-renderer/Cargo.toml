@@ -11,8 +11,9 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = { version = "3", features = ["napi9", "tokio_rt"] }
 napi-derive = "3"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "macros", "sync"] }
 log = { version = "0.4", features = ["std"] }
+uuid = { version = "1", features = ["v4"] }
 dlna-dmr = { path = "vendor/dlna-dmr" }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 quick-xml = { version = "0.37", features = ["serialize"] }

@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{any, get};
+use axum::extract::Request;
 use axum::Router;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
@@ -27,6 +28,8 @@ use tokio::sync::watch;
 use dlna_dmr::ssdp::SSDPServer;
 use dlna_dmr::xml::{AVTransport, RenderingControl};
 use dlna_dmr::{DMROptions, HTTPServer};
+
+mod gena;
 
 // ---------------------------------------------------------------------------
 // log 门面桥：dlna-dmr 内部用 log crate 记日志，这里装一个转发实现，
@@ -71,7 +74,7 @@ const CM_NS: &str = "urn:schemas-upnp-org:service:ConnectionManager:1";
 
 /// ConnectionManager Sink 协议列表：音频 + 视频容器（视频由解码器提取音频轨）。
 /// 刻意不列图片与 m3u8（HLS），避免发送端提供我们无法处理的内容类型。
-const SINK_PROTOCOLS: &str = "http-get:*:audio/mpeg:*,http-get:*:audio/mp3:*,\
+pub(crate) const SINK_PROTOCOLS: &str = "http-get:*:audio/mpeg:*,http-get:*:audio/mp3:*,\
 http-get:*:audio/mp4:*,http-get:*:audio/aac:*,http-get:*:audio/x-m4a:*,\
 http-get:*:audio/x-aac:*,http-get:*:audio/flac:*,http-get:*:audio/x-flac:*,\
 http-get:*:audio/wav:*,http-get:*:audio/x-wav:*,http-get:*:audio/L16:*,\
@@ -204,6 +207,68 @@ impl PlaybackState {
     }
 }
 
+/// 事件面字段快照（GENA NOTIFY 关心的最小集合；位置进度不进事件，由 Get* 轮询获取）。
+#[derive(Clone, PartialEq, Eq)]
+struct EventedFields {
+    transport_state: String,
+    current_uri: String,
+    duration_secs: u32,
+    volume: u8,
+    mute: bool,
+}
+
+impl EventedFields {
+    fn of(state: &PlaybackState) -> Self {
+        Self {
+            transport_state: state.upnp_transport_state().to_string(),
+            current_uri: state.current_uri.clone(),
+            duration_secs: state.duration_secs,
+            volume: state.volume,
+            mute: state.mute,
+        }
+    }
+}
+
+fn diff_evented(before: &EventedFields, after: &EventedFields) -> gena::StateDiff {
+    gena::StateDiff {
+        transport_changed: before.transport_state != after.transport_state
+            || before.current_uri != after.current_uri
+            || before.duration_secs != after.duration_secs,
+        volume_changed: before.volume != after.volume || before.mute != after.mute,
+    }
+}
+
+/// 统一状态提交：写 PLAYBACK → diff 事件面字段 → 触发 GENA NOTIFY。
+/// 锁异常时静默跳过（与原各写入点行为一致），不影响调用方应答。
+fn commit_state(update: impl FnOnce(&mut PlaybackState)) {
+    let diff = {
+        let Ok(mut state) = PLAYBACK.write() else {
+            return;
+        };
+        let before = EventedFields::of(&state);
+        update(&mut state);
+        diff_evented(&before, &EventedFields::of(&state))
+    };
+    if diff.transport_changed || diff.volume_changed {
+        gena::notify_state_changed(diff);
+    }
+}
+
+/// 事件组装用的状态快照（gena.rs 消费者调用）。
+pub(crate) fn playback_event_snapshot() -> (String, String, u32, u8, bool) {
+    let state = PLAYBACK
+        .read()
+        .map(|s| s.clone())
+        .unwrap_or_else(|_| PlaybackState::new());
+    (
+        state.upnp_transport_state().to_string(),
+        state.current_uri,
+        state.duration_secs,
+        state.volume,
+        state.mute,
+    )
+}
+
 /// `String::new()` 是 const fn，可在静态初始化中直接构造。
 static PLAYBACK: RwLock<PlaybackState> = RwLock::new(PlaybackState::new());
 
@@ -234,7 +299,7 @@ fn ev(kind: &str) -> DlnaRendererEvent {
 }
 
 /// UPnP 时间格式 H:MM:SS。
-fn format_upnp_time(secs: u32) -> String {
+pub(crate) fn format_upnp_time(secs: u32) -> String {
     format!("{}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
@@ -451,16 +516,14 @@ impl RendererService {
                     }
                     let title =
                         title_from_metadata(&set.current_uri_meta_data).unwrap_or_default();
-                    {
-                        // 锁异常时静默跳过缓存更新，不影响应答与事件。
-                        if let Ok(mut state) = PLAYBACK.write() {
-                            state.current_uri = uri.clone();
-                            state.title = title.clone();
-                            state.transport_state = "TRANSITIONING".to_string();
-                            state.rel_time_secs = 0;
-                            state.duration_secs = 0;
-                        }
-                    }
+                    // 走 commit_state：锁异常静默跳过，URI/状态变化会驱动 GENA NOTIFY。
+                    commit_state(|state| {
+                        state.current_uri = uri.clone();
+                        state.title = title.clone();
+                        state.transport_state = "TRANSITIONING".to_string();
+                        state.rel_time_secs = 0;
+                        state.duration_secs = 0;
+                    });
                     self.emit(DlnaRendererEvent {
                         uri: Some(uri),
                         metadata: Some(set.current_uri_meta_data),
@@ -589,9 +652,7 @@ impl RendererService {
         match rendering_control {
                 Ok(RenderingControl::SetVolume(set)) => {
                     let volume = set.desired_volume.min(100) as u8;
-                    if let Ok(mut state) = PLAYBACK.write() {
-                        state.volume = volume;
-                    }
+                    commit_state(|state| state.volume = volume);
                     self.emit(DlnaRendererEvent {
                         value: Some(f64::from(volume)),
                         ..ev("set-volume")
@@ -607,9 +668,7 @@ impl RendererService {
                     )
                 }
                 Ok(RenderingControl::SetMute(set)) => {
-                    if let Ok(mut state) = PLAYBACK.write() {
-                        state.mute = set.desired_mute;
-                    }
+                    commit_state(|state| state.mute = set.desired_mute);
                     self.emit(DlnaRendererEvent {
                         mute: Some(set.desired_mute),
                         ..ev("set-mute")
@@ -704,6 +763,25 @@ fn build_router(service: Arc<RendererService>, options: Arc<DMROptions>) -> Rout
                 RendererService::handle_connection_manager(body).await
             }),
         )
+        // GENA 事件订阅：SUBSCRIBE/UNSUBSCRIBE 为自定义方法，用 any() 统一接管
+        .route(
+            "/AVTransport/event",
+            any(move |req: Request| async move {
+                gena::handle_event_request(gena::GenaService::AVTransport, req).await
+            }),
+        )
+        .route(
+            "/RenderingControl/event",
+            any(move |req: Request| async move {
+                gena::handle_event_request(gena::GenaService::RenderingControl, req).await
+            }),
+        )
+        .route(
+            "/Ignore/event",
+            any(move |req: Request| async move {
+                gena::handle_event_request(gena::GenaService::ConnectionManager, req).await
+            }),
+        )
         .route("/", get(|| async { "EchoMusic DLNA renderer" }))
 }
 
@@ -784,6 +862,10 @@ async fn start_renderer_inner(
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
+    // GENA：启动常驻 NOTIFY 消费者（幂等），并清掉上次会话的残留订阅。
+    gena::ensure_notify_consumer();
+    gena::clear_all();
+
     // 重置播放状态缓存，等待上层推送真实状态。
     if let Ok(mut state) = PLAYBACK.write() {
         state.transport_state = "STOPPED".to_string();
@@ -839,6 +921,8 @@ async fn start_renderer_inner(
 pub async fn stop_renderer() -> Result<()> {
     let runtime = RUNTIME.lock().map_err(poisoned)?.take();
     STARTING.store(false, Ordering::Release);
+    // 订阅随会话结束全部失效，避免下次启动残留幽灵订阅。
+    gena::clear_all();
     if let Some(runtime) = runtime {
         // 发送停机信号；Sender 随 runtime drop，watch 通道关闭同样会解除任务阻塞。
         let _ = runtime.shutdown_tx.send(true);
@@ -852,26 +936,28 @@ pub async fn stop_renderer() -> Result<()> {
 /// JS 推送播放状态缓存（来自 PlayerController 事件）。
 #[napi]
 pub fn update_renderer_state(update: DlnaRendererStateUpdate) -> Result<()> {
-    let mut state = PLAYBACK.write().map_err(poisoned)?;
-    state.transport_state = update.transport_state;
-    if let Some(uri) = update.current_uri {
-        state.current_uri = uri;
-    }
-    if let Some(title) = update.title {
-        state.title = title;
-    }
-    if let Some(secs) = update.rel_time_secs {
-        state.rel_time_secs = secs.max(0.0) as u32;
-    }
-    if let Some(secs) = update.duration_secs {
-        state.duration_secs = secs.max(0.0) as u32;
-    }
-    if let Some(volume) = update.volume {
-        state.volume = volume;
-    }
-    if let Some(mute) = update.mute {
-        state.mute = mute;
-    }
+    // 走 commit_state：事件面字段（TransportState/URI/时长/音量/静音）变化时驱动 GENA NOTIFY。
+    commit_state(|state| {
+        state.transport_state = update.transport_state;
+        if let Some(uri) = update.current_uri {
+            state.current_uri = uri;
+        }
+        if let Some(title) = update.title {
+            state.title = title;
+        }
+        if let Some(secs) = update.rel_time_secs {
+            state.rel_time_secs = secs.max(0.0) as u32;
+        }
+        if let Some(secs) = update.duration_secs {
+            state.duration_secs = secs.max(0.0) as u32;
+        }
+        if let Some(volume) = update.volume {
+            state.volume = volume;
+        }
+        if let Some(mute) = update.mute {
+            state.mute = mute;
+        }
+    });
     Ok(())
 }
 
