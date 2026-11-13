@@ -483,6 +483,78 @@ export interface PluginServerInterceptOptions {
   name?: string;
 }
 
+/**
+ * DLNA 投放事件类型（capabilities.dlnaCast 接管能力可见的完整数据）。
+ * 事件由宿主 DLNA 接收端（echo-dlna-renderer）产生，经拦截链分发给插件。
+ */
+export type PluginDlnaCastEventKind =
+  | 'set-av-transport-uri'
+  | 'play'
+  | 'pause'
+  | 'stop'
+  | 'seek'
+  | 'next'
+  | 'previous'
+  | 'set-volume'
+  | 'set-mute'
+  | 'unsupported'
+  | 'session-end';
+
+export interface PluginDlnaCastEvent {
+  kind: PluginDlnaCastEventKind;
+  /** 投播 URI（set-av-transport-uri / unsupported） */
+  uri?: string;
+  /** DIDL-Lite 原始 XML（set-av-transport-uri），可用 DOMParser 自行解析扩展字段 */
+  metadata?: string;
+  /** 从 DIDL 提取的标题（set-av-transport-uri），发送端可能不提供 */
+  title?: string;
+  /** unsupported 的原因；session-end 的原因：'sender-stop'（发送端停止）| 'takeover'（本地播放接管） */
+  reason?: string;
+  /** seek 单位（当前仅 REL_TIME）与目标值（H:MM:SS） */
+  unit?: string;
+  target?: string;
+  /** 音量 0-100（set-volume） */
+  value?: number;
+  /** 静音状态（set-mute） */
+  mute?: boolean;
+}
+
+/** 插件接管会话时回推给发送端的播放状态（native 侧缓存，用于应答 Get* 查询）。 */
+export interface PluginDlnaCastStateUpdate {
+  /** UPnP TransportState：STOPPED / PLAYING / PAUSED_PLAYBACK / TRANSITIONING */
+  transportState: 'STOPPED' | 'PLAYING' | 'PAUSED_PLAYBACK' | 'TRANSITIONING';
+  currentUri?: string;
+  title?: string;
+  relTimeSecs?: number;
+  durationSecs?: number;
+  volume?: number;
+  mute?: boolean;
+}
+
+export type PluginDlnaCastNext = () => void;
+
+/**
+ * 投放事件拦截处理器。
+ * - 调用 next()：放行，宿主继续默认处理；
+ * - 不调用 next 且返回 true：拦截（宿主跳过该事件的默认处理，插件全权接管）；
+ * - 返回 false/undefined 或抛出异常：放行（fail-open）。
+ * 注意 session-end 为通知型事件：宿主会话状态清理不受拦截影响，拦截仅跳过宿主提示。
+ */
+export type PluginDlnaCastHandler = (
+  event: PluginDlnaCastEvent,
+  next: PluginDlnaCastNext,
+) => boolean | void | Promise<boolean | void>;
+
+export interface PluginDlnaCastRegisterOptions {
+  /**
+   * 优先级，默认 0。数值越大越早收到事件。
+   * 建议档位：100 观测/日志、0 接管处理、-100 兜底放行观测。
+   */
+  priority?: number;
+  /** 仅用于日志与排查的标签（如 'cast-logger'），不参与排序 */
+  name?: string;
+}
+
 export interface PluginWebServerListenOptions {
   port?: number;
   host?: '127.0.0.1' | 'localhost';
@@ -853,6 +925,8 @@ export interface EchoPluginManifest {
     webServer?: boolean;
     /** 拦截主程序发往 server 的 API 请求（读取凭证与数据、修改、Mock、转发） */
     serverIntercept?: boolean;
+    /** 接管 DLNA 投放接收端事件（读取投播数据、拦截或放行控制流程、回推播放状态） */
+    dlnaCast?: boolean;
   };
   contributes?: {
     windows?: PluginWindowManifest[];

@@ -949,6 +949,15 @@ export interface IElectronAPI {
       ip?: string;
       friendlyName?: string;
     }>;
+    pushState: (update: {
+      transportState: 'STOPPED' | 'PLAYING' | 'PAUSED_PLAYBACK' | 'TRANSITIONING';
+      currentUri?: string;
+      title?: string;
+      relTimeSecs?: number;
+      durationSecs?: number;
+      volume?: number;
+      mute?: boolean;
+    }) => Promise<void>;
     onEvent: (func: (event: { type: string; payload?: unknown }) => void) => () => void;
   };
   player: {

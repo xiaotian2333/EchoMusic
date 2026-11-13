@@ -270,7 +270,11 @@ async function handleNativeEvent(event: NativeRendererEvent): Promise<void> {
       // 打断当前播放、播放栏标题/进度/SMTC 全部自动生效，队列保持不动。
       const activeController = getController?.() ?? null;
       if (activeController) attachControllerOnce(activeController);
-      publishToRenderer('cast-request', { uri, title: castTitle });
+      publishToRenderer('cast-request', {
+        uri,
+        title: castTitle,
+        metadata: event.metadata,
+      });
       return;
     }
     case 'play': {
@@ -449,4 +453,22 @@ export function getDlnaRendererStatus(): DlnaRendererStatusView {
 /** 退出清理（before-quit）。 */
 export async function shutdownDlnaRenderer(): Promise<void> {
   await stopRendererInternal();
+}
+
+/** 插件接管投播会话时回推播放状态（native 未运行时忽略）。 */
+export function pushDlnaCastState(update: {
+  transportState: string;
+  currentUri?: string;
+  title?: string;
+  relTimeSecs?: number;
+  durationSecs?: number;
+  volume?: number;
+  mute?: boolean;
+}): void {
+  if (!started) return;
+  try {
+    native?.updateRendererState(update);
+  } catch (error) {
+    log.warn('[DlnaRenderer] 插件状态回推失败:', error);
+  }
 }

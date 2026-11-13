@@ -53,6 +53,7 @@ import { createPluginResourceApi } from './resources';
 import { createPluginBackupsApi, type PluginBackupsApi } from './backups';
 import { createPluginGraphicsApi, type PluginGraphicsApi } from './graphics';
 import { createServerInterceptApi, type PluginServerInterceptApi } from './serverIntercept';
+import { createDlnaCastApi, type PluginDlnaCastApi } from './dlnaCast';
 
 type PluginCallbackRunner = <T>(
   pluginId: string,
@@ -185,6 +186,7 @@ export interface EchoPluginContext {
   };
   net: ReturnType<typeof createPluginNetworkApi>;
   server: PluginServerInterceptApi;
+  dlnaCast: PluginDlnaCastApi;
   icons: typeof icons;
   tasks: ReturnType<typeof createTaskApi>;
   electron: Window['electron'];
@@ -414,6 +416,12 @@ export const createPluginContext = (
     dom: createDomApi(descriptor.id, addDisposable, runPluginCallback),
     net: createPluginNetworkApi(descriptor, addDisposable, resourceApi),
     server: createServerInterceptApi(descriptor, apiDeps),
+    dlnaCast: createDlnaCastApi(descriptor, {
+      ...apiDeps,
+      pushState: (state) => {
+        window.electron?.dlnaRenderer?.pushState(state);
+      },
+    }),
     icons,
     tasks: createTaskApi(descriptor.id, apiDeps),
     electron: window.electron,

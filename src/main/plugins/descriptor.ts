@@ -263,6 +263,9 @@ const validateManifestCapabilities = (manifest: EchoPluginManifest) => {
   ) {
     return 'manifest.capabilities.serverIntercept 必须是布尔值';
   }
+  if (capabilities.dlnaCast !== undefined && typeof capabilities.dlnaCast !== 'boolean') {
+    return 'manifest.capabilities.dlnaCast 必须是布尔值';
+  }
   return '';
 };
 

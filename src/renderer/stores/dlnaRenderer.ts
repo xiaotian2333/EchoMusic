@@ -4,7 +4,8 @@
  * - 首次启用前生成稳定的设备 UDN 并持久化，避免手机端反复见到"新设备"
  * - 收到投播请求时构造伪曲目走 player store 正规播放链：打断当前播放、
  *   播放栏标题/进度/SMTC 自动生效，队列保持不动
- * - 主进程事件转 toast 提示
+ * - 所有投放事件先过插件拦截链（capabilities.dlnaCast）：任一插件拦截
+ *   即跳过宿主默认处理（播放/控制/提示），由插件全权接管
  *
  * 仅主窗口挂载（迷你窗口不重复绑定）。
  */
@@ -12,6 +13,8 @@ import { watch } from 'vue';
 import { useSettingStore } from './setting';
 import { usePlayerStore } from './player';
 import { useToastStore } from './toast';
+import { runDlnaCastInterceptorChain } from '@/plugins/dlnaCast';
+import type { PluginDlnaCastEvent, PluginDlnaCastEventKind } from '../../shared/plugins';
 import type { ResolvedAudioSource } from './player/types';
 import type { Song } from '@/models/song';
 
@@ -163,33 +166,77 @@ export function useDlnaRendererBridge(): () => void {
     },
   );
 
+  /** 构造投放事件并过插件拦截链：拦截则宿主不做任何处理，放行走 fallback。 */
+  const dispatchCastEvent = (event: PluginDlnaCastEvent, fallback: () => void): void => {
+    runDlnaCastInterceptorChain(event, fallback);
+  };
+
+  const controlEventKinds: ReadonlySet<string> = new Set([
+    'play',
+    'pause',
+    'stop',
+    'seek',
+    'set-volume',
+    'next',
+    'previous',
+    'set-mute',
+  ]);
+
   const off = api?.onEvent((event) => {
     const payload = (event?.payload ?? {}) as Record<string, unknown>;
+    const str = (key: string): string | undefined =>
+      typeof payload[key] === 'string' ? (payload[key] as string) : undefined;
     const toast = useToastStore();
     switch (event?.type) {
       case 'cast-request':
-        handleCastRequest(payload);
+        dispatchCastEvent(
+          {
+            kind: 'set-av-transport-uri',
+            uri: str('uri'),
+            title: str('title'),
+            metadata: str('metadata'),
+          },
+          () => handleCastRequest(payload),
+        );
         break;
-      case 'cast-control':
-        handleCastControl(payload);
+      case 'cast-control': {
+        const action = typeof payload.action === 'string' ? payload.action : '';
+        if (!controlEventKinds.has(action)) break;
+        dispatchCastEvent(
+          {
+            kind: action as PluginDlnaCastEventKind,
+            unit: str('unit'),
+            target: str('target'),
+            value: typeof payload.value === 'number' ? payload.value : undefined,
+            mute: typeof payload.mute === 'boolean' ? payload.mute : undefined,
+          },
+          () => handleCastControl(payload),
+        );
         break;
+      }
       case 'cast-stopped':
+        // 宿主会话状态清理无条件执行（不受拦截影响）；拦截链只决定是否弹宿主提示。
         clearCastSession();
-        if (payload.reason === 'takeover') {
-          toast.show('本机播放已接管，投播会话结束', 'info', 3500);
-        } else if (payload.reason === 'sender-stop') {
-          toast.show('投播已停止', 'info', 3000);
-        }
+        dispatchCastEvent({ kind: 'session-end', reason: str('reason') }, () => {
+          if (payload.reason === 'takeover') {
+            toast.show('本机播放已接管，投播会话结束', 'info', 3500);
+          } else if (payload.reason === 'sender-stop') {
+            toast.show('投播已停止', 'info', 3000);
+          }
+        });
         break;
       case 'unsupported':
-        toast.show(
-          `不支持该内容：${typeof payload.reason === 'string' ? payload.reason : '格式或协议不受支持'}`,
-          'warning',
-          5000,
+        dispatchCastEvent({ kind: 'unsupported', uri: str('uri'), reason: str('reason') }, () =>
+          toast.show(
+            `不支持该内容：${typeof payload.reason === 'string' ? payload.reason : '格式或协议不受支持'}`,
+            'warning',
+            5000,
+          ),
         );
         break;
       case 'cast-failed':
         // 仅剩接收端启动失败场景（投播加载失败由 store 的 notice 通道提示）。
+        // 启动失败不经拦截链：与投放会话无关，宿主直接提示。
         toast.show(
           `接收端异常：${typeof payload.reason === 'string' ? payload.reason : '未知错误'}`,
           'danger',

@@ -1835,6 +1835,15 @@ contextBridge.exposeInMainWorld('electron', {
     applyConfig: (config: { enabled: boolean; name: string; udn: string }) =>
       ipcRenderer.invoke('dlnaRenderer:apply-config', config),
     getStatus: () => ipcRenderer.invoke('dlnaRenderer:get-status'),
+    pushState: (update: {
+      transportState: 'STOPPED' | 'PLAYING' | 'PAUSED_PLAYBACK' | 'TRANSITIONING';
+      currentUri?: string;
+      title?: string;
+      relTimeSecs?: number;
+      durationSecs?: number;
+      volume?: number;
+      mute?: boolean;
+    }) => ipcRenderer.invoke('dlnaRenderer:push-state', update),
     onEvent: (func: (event: { type: string; payload?: unknown }) => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
